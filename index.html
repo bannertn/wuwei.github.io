@@ -54,6 +54,152 @@
                 padding: 4px;
             }
         }
+
+        /* --- 列印專用樣式 (A4 優化) --- */
+        @media print {
+            @page {
+                size: A4; /* 設定紙張大小為 A4 */
+                margin: 1cm; /* 設定邊界 */
+            }
+            body {
+                background-color: white;
+                font-size: 10pt; /*稍微縮小字體以塞入一頁*/
+                -webkit-print-color-adjust: exact; /* 強制列印背景色(如果瀏覽器支援) */
+                print-color-adjust: exact;
+            }
+            
+            /* 隱藏列印時不需要的元素 */
+            .no-print, button, nav, .month-nav-btn {
+                display: none !important;
+            }
+            
+            /* 調整容器 */
+            .max-w-6xl {
+                max-width: 100% !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            
+            /* 標題調整 */
+            h1 {
+                font-size: 18pt !important;
+                margin-bottom: 10px !important;
+                text-align: center;
+                border-bottom: 2px solid #000 !important;
+                padding-bottom: 5px !important;
+                color: #000 !important;
+            }
+            
+            /* 導航列調整：隱藏按鈕，只留年份月份文字 */
+            .nav-container {
+                box-shadow: none !important;
+                background: none !important;
+                margin-bottom: 10px !important;
+                padding: 0 !important;
+                justify-content: center !important;
+            }
+            .nav-container select {
+                border: none !important;
+                font-size: 14pt !important;
+                font-weight: bold !important;
+                appearance: none !important; /* 隱藏下拉箭頭 */
+                -webkit-appearance: none;
+                padding: 0 5px !important;
+                background: transparent !important;
+            }
+
+            /* 日曆表格調整 */
+            .calendar-grid {
+                border-left: 2px solid #000 !important;
+                border-top: 2px solid #000 !important;
+            }
+            .day-header {
+                background-color: #ddd !important; /* 列印改用灰色背景 */
+                color: #000 !important;
+                border-color: #000 !important;
+                padding: 5px 0 !important;
+                font-size: 11pt;
+            }
+            .day-cell {
+                min-height: auto !important; /* 高度自動縮放 */
+                height: 85px; /* 固定一個較小的高度以確保塞入 A4 */
+                border-color: #000 !important;
+                padding: 2px !important;
+            }
+            .day-cell.bg-indigo-50\/50, .day-cell.bg-gray-100 {
+                background-color: #f5f5f5 !important; /* 週末和空白日用淺灰 */
+            }
+            
+            /* 輸入框改為純文字顯示效果 */
+            input.time-input {
+                border: none !important;
+                padding: 0 !important;
+                font-size: 9pt !important;
+                height: auto !important;
+                width: auto !important;
+                background: transparent !important;
+            }
+            label {
+                font-size: 8pt !important;
+                color: #333 !important;
+            }
+            
+            /* 統計區塊調整 */
+            .summary-container {
+                margin-top: 15px !important;
+                padding: 10px !important;
+                box-shadow: none !important;
+                background: none !important;
+                border: 2px solid #000 !important;
+                border-radius: 0 !important;
+            }
+            .summary-header {
+                display: none !important; /* 隱藏原本的「薪資統計」標題列，節省空間 */
+            }
+            .summary-grid {
+                display: grid !important;
+                grid-template-columns: repeat(3, 1fr) !important;
+                gap: 10px !important;
+            }
+            .summary-item {
+                border: 1px solid #000 !important;
+                box-shadow: none !important;
+                padding: 5px !important;
+                border-radius: 0 !important;
+                background: white !important;
+            }
+            /* 強制顯示時薪輸入框的值 */
+            input#hourlyRateInput {
+                border: none !important;
+                font-size: 14pt !important;
+                font-weight: bold !important;
+                color: #000 !important;
+                padding: 0 !important;
+                width: 100% !important;
+                -webkit-appearance: none;
+            }
+            .summary-text {
+                font-size: 14pt !important;
+                color: #000 !important;
+            }
+
+            /* 簽名欄調整 */
+            .signature-section {
+                margin-top: 20px !important;
+                border-top: none !important;
+                padding-top: 0 !important;
+            }
+            .signature-row {
+                margin-bottom: 20px !important;
+            }
+            .signature-label {
+                font-size: 10pt !important;
+                color: #000 !important;
+            }
+            .signature-line {
+                border-bottom: 1px solid #000 !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -75,77 +221,59 @@
         let auth;
         let userId = null;
         let currentYear, currentMonth;
-        let calendarData = {}; // Cache for monthly data: { '2025-11-20': { start: '12:00', end: '18:00' } }
+        let calendarData = {}; 
         let settingsDocRef;
-        
-        // Settings/Summary State
-        let hourlyRate = 0; // 時薪
-        const DEFAULT_HOURLY_RATE = 190; // 台灣基本時薪
+        let hourlyRate = 0; 
+        const DEFAULT_HOURLY_RATE = 190; 
 
-        // Date initialization
         const today = new Date();
         currentYear = today.getFullYear();
-        currentMonth = today.getMonth(); // 0-11
+        currentMonth = today.getMonth();
 
-        setLogLevel('debug'); // Enable Firestore logging
+        setLogLevel('debug'); 
 
-        // Utility function to convert time string (HH:MM) to minutes
         function timeToMinutes(timeStr) {
             if (!timeStr) return 0;
             const [hours, minutes] = timeStr.split(':').map(Number);
             return hours * 60 + minutes;
         }
 
-        // Utility function to calculate work duration in hours (decimal)
         function calculateDuration(start, end) {
             const startMins = timeToMinutes(start);
             const endMins = timeToMinutes(end);
             if (endMins > startMins) {
                 return (endMins - startMins) / 60;
             }
-            return 0; // Invalid or no work duration
+            return 0; 
         }
 
-        // Function to get default times based on day of week (0=Sun, 1=Mon, ..., 6=Sat)
         function getDefaultTimes(dayOfWeek) {
-            // Monday(1), Wednesday(3), Thursday(4), Friday(5)
             if ([1, 3, 4, 5].includes(dayOfWeek)) {
                 return { start: '12:00', end: '18:00' };
             }
-            // Tuesday(2) - Special case
             if (dayOfWeek === 2) {
                 return { start: '16:00', end: '18:00' };
             }
-            // Weekend: Saturday(6), Sunday(0)
             return { start: '', end: '' };
         }
 
-        // --- Data Persistence (Firestore) ---
-
-        // Helper to get the path for the data collection (private data)
         function getCollectionPath() {
             if (!userId) {
                 console.error("Firestore: User ID is missing.");
                 return null;
             }
-            // Private data path: /artifacts/{appId}/users/{userId}/{collectionName}
             return `artifacts/${appId}/users/${userId}/work_entries`;
         }
         
-        // Helper to get the settings doc reference
         function getSettingsDocRef(dbInstance, uid) {
              if (!uid) {
                 console.error("Firestore: User ID is missing for settings.");
                 return null;
             }
-            // Private data path: /artifacts/{appId}/users/{userId}/settings/{docId}
             return doc(dbInstance, `artifacts/${appId}/users/${uid}/settings`, 'calendar_settings');
         }
 
-
-        // Save a single day's time entry
         async function saveTimeEntry(dateKey, start, end) {
-            // 1. 準備資料物件
             const duration = calculateDuration(start, end);
             const data = {
                 dateKey: dateKey,
@@ -154,18 +282,14 @@
                 duration: duration
             };
 
-            // 2. 樂觀更新 (Optimistic Update)：無論後端是否成功，先更新本地快取和 UI
-            // 這樣可以確保「自動加總」永遠即時反應，不會失效
             if (start === '' && end === '') {
                 delete calendarData[dateKey];
             } else {
                 calendarData[dateKey] = data;
             }
             
-            // 立即重新計算總合
             updateSummary();
 
-            // 3. 後端同步 (如果已登入)
             if (!db || !userId) {
                 console.warn("User not logged in or DB not ready. Changes are local only.");
                 return;
@@ -173,12 +297,10 @@
 
             const collectionPath = getCollectionPath();
             if (!collectionPath) return;
-
             const docRef = doc(db, collectionPath, dateKey);
 
             try {
                 if (start === '' && end === '') {
-                    // If both are empty, delete the document if it exists
                     await deleteDoc(docRef);
                     console.log(`Deleted empty entry for ${dateKey}`);
                 } else {
@@ -187,11 +309,9 @@
                 }
             } catch (error) {
                 console.error("Error saving time entry:", error);
-                // 選項：如果存檔失敗，可以在這裡顯示錯誤提示，或者回滾數據
             }
         }
 
-        // Save hourly rate
         async function saveHourlyRate() {
             if (!settingsDocRef) return;
             try {
@@ -202,45 +322,38 @@
             }
         }
 
-        // Setup real-time listener for the current month's data
         function setupDataListener() {
             if (!db || !userId) return;
             const collectionPath = getCollectionPath();
             if (!collectionPath) return;
             
-            // Start of the month to query (YYYY-MM-01)
             const yearMonth = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
             const q = query(collection(db, collectionPath), 
                 where("dateKey", ">=", `${yearMonth}-01`), 
-                where("dateKey", "<=", `${yearMonth}-31`)); // Simple range query
+                where("dateKey", "<=", `${yearMonth}-31`)); 
 
-            // Listen for changes
             onSnapshot(q, (snapshot) => {
-                calendarData = {}; // Clear cache for the current month
+                calendarData = {}; 
                 snapshot.forEach((doc) => {
                     const data = doc.data();
                     calendarData[data.dateKey] = data;
                 });
-                console.log(`Fetched ${snapshot.size} entries for the current month.`);
-                renderCalendar(currentYear, currentMonth); // Re-render the calendar
-                updateSummary(); // Recalculate summary
+                renderCalendar(currentYear, currentMonth); 
+                updateSummary(); 
             }, (error) => {
                 console.error("Error setting up data listener:", error);
             });
             
-             // Listen for hourly rate changes
             onSnapshot(settingsDocRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     hourlyRate = data.hourlyRate || DEFAULT_HOURLY_RATE;
                 } else {
-                    // Set default if doc doesn't exist
                     hourlyRate = DEFAULT_HOURLY_RATE;
                 }
                 const hourlyRateInput = document.getElementById('hourlyRateInput');
                 if (hourlyRateInput) {
                      hourlyRateInput.value = hourlyRate;
-                     hourlyRateInput.dataset.initialValue = hourlyRate; // Store for comparison
                 }
                 updateSummary();
             }, (error) => {
@@ -248,13 +361,9 @@
             });
         }
 
-
-        // --- Authentication & Initialization ---
-
         async function initializeAppAndAuth() {
             if (!firebaseConfig.apiKey) {
                 console.warn("Firebase config is missing. Data persistence will not work.");
-                // Proceed without persistence setup
                 initializeUI();
                 return;
             }
@@ -264,37 +373,30 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // Sign in using custom token or anonymously
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await signInAnonymously(auth);
                 }
 
-                // Wait for auth state change to get the user ID
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
-                        console.log("Firebase authenticated. User ID:", userId);
                         settingsDocRef = getSettingsDocRef(db, userId);
-                        setupDataListener(); // Start listening for data once authenticated
+                        setupDataListener(); 
                     } else {
                         userId = null;
-                        console.log("Firebase: Not authenticated.");
                     }
                     initializeUI();
                 });
 
             } catch (error) {
                 console.error("Firebase initialization or authentication failed:", error);
-                initializeUI(); // Initialize UI even if Firebase fails
+                initializeUI(); 
             }
         }
 
-        // --- UI Rendering and Interaction ---
-
         function initializeUI() {
-            // Set up month/year selectors
             const monthSelector = document.getElementById('monthSelector');
             const yearSelector = document.getElementById('yearSelector');
 
@@ -315,7 +417,6 @@
             monthSelector.value = currentMonth;
             yearSelector.value = currentYear;
 
-            // Add event listeners for navigation and settings
             document.getElementById('prevMonthBtn').addEventListener('click', () => navigateMonth(-1));
             document.getElementById('nextMonthBtn').addEventListener('click', () => navigateMonth(1));
             monthSelector.addEventListener('change', handleDateChange);
@@ -323,43 +424,31 @@
             
             const hourlyRateInput = document.getElementById('hourlyRateInput');
             
-            // Initialize hourly rate input and set up delayed save
             hourlyRate = hourlyRate || DEFAULT_HOURLY_RATE;
             hourlyRateInput.value = hourlyRate;
             
             let saveRateTimeout;
             hourlyRateInput.addEventListener('input', (e) => {
-                // Clear any pending save
                 clearTimeout(saveRateTimeout);
-                
                 const newValue = parseFloat(e.target.value);
                 if (isNaN(newValue) || newValue < 0) {
-                     // Optionally, revert or block invalid input
                      return;
                 }
-                
                 hourlyRate = newValue;
-                updateSummary(); // Update UI immediately
-                
-                // Set a timeout to save to Firestore 1 second after the last input
+                updateSummary(); 
                 saveRateTimeout = setTimeout(() => {
                     if (userId) {
                         saveHourlyRate();
-                    } else {
-                         console.warn("Not authenticated, hourly rate not saved to Firestore.");
-                    }
+                    } 
                 }, 1000);
             });
 
             if (!userId) {
-                // Initial render if authentication is not ready or failed
                 renderCalendar(currentYear, currentMonth);
                 updateSummary();
             }
-            // If authenticated, render will be called by onSnapshot
         }
         
-        // Navigation function
         function navigateMonth(delta) {
             const date = new Date(currentYear, currentMonth + delta, 1);
             currentYear = date.getFullYear();
@@ -369,14 +458,12 @@
             document.getElementById('yearSelector').value = currentYear;
             
             if (userId) {
-                // Re-render will be triggered by a new data listener setup/query
                 setupDataListener(); 
             } else {
                 renderCalendar(currentYear, currentMonth);
             }
         }
         
-        // Handle dropdown change
         function handleDateChange() {
              const newMonth = parseInt(document.getElementById('monthSelector').value);
              const newYear = parseInt(document.getElementById('yearSelector').value);
@@ -384,7 +471,6 @@
              if (currentMonth !== newMonth || currentYear !== newYear) {
                 currentMonth = newMonth;
                 currentYear = newYear;
-                
                 if (userId) {
                     setupDataListener(); 
                 } else {
@@ -393,33 +479,26 @@
              }
         }
 
-
-        // Function to render the calendar grid
         function renderCalendar(year, month) {
             const calendarBody = document.getElementById('calendarBody');
-            calendarBody.innerHTML = ''; // Clear previous days
+            calendarBody.innerHTML = ''; 
 
-            // Get the first day of the month (0=Sun, 1=Mon, ..., 6=Sat)
             const firstDayOfMonth = new Date(year, month, 1).getDay(); 
-            // Get the total number of days in the month
             const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-            // 1. Add padding (empty cells) for days before the 1st
             for (let i = 0; i < firstDayOfMonth; i++) {
                 const emptyCell = document.createElement('div');
                 emptyCell.className = 'day-cell bg-gray-100';
                 calendarBody.appendChild(emptyCell);
             }
 
-            // 2. Add days of the month
             for (let day = 1; day <= daysInMonth; day++) {
                 const date = new Date(year, month, day);
-                const dayOfWeek = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+                const dayOfWeek = date.getDay(); 
                 
                 const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                 const savedData = calendarData[dateKey];
                 
-                // Determine the times to display (saved data overrides defaults)
                 let { start: defaultStart, end: defaultEnd } = getDefaultTimes(dayOfWeek);
                 const startValue = savedData ? savedData.start : defaultStart;
                 const endValue = savedData ? savedData.end : defaultEnd;
@@ -429,31 +508,29 @@
                 const cell = document.createElement('div');
                 cell.className = `day-cell flex flex-col ${isWeekend ? 'bg-indigo-50/50' : ''}`;
                 
-                // Day number and weekday name
                 const dayName = ['日', '一', '二', '三', '四', '五', '六'][dayOfWeek];
                 const dayHeader = `
-                    <div class="flex justify-between items-center mb-2">
-                        <span class="text-xl font-bold text-indigo-700">${day}</span>
-                        <span class="text-sm font-medium ${isWeekend ? 'text-red-500' : 'text-gray-600'}">週${dayName}</span>
+                    <div class="flex justify-between items-center mb-1 md:mb-2">
+                        <span class="text-lg md:text-xl font-bold text-indigo-700">${day}</span>
+                        <span class="text-xs md:text-sm font-medium ${isWeekend ? 'text-red-500' : 'text-gray-600'}">週${dayName}</span>
                     </div>
                 `;
 
-                // Time inputs
                 const timeInputs = `
-                    <div class="space-y-1">
-                        <div class="flex items-center space-x-2">
-                            <label for="start-${dateKey}" class="text-xs text-gray-500 w-10 shrink-0">上班:</label>
+                    <div class="space-y-0.5 md:space-y-1">
+                        <div class="flex items-center space-x-1 md:space-x-2">
+                            <label for="start-${dateKey}" class="text-xs text-gray-500 w-8 md:w-10 shrink-0">上班:</label>
                             <input type="time" id="start-${dateKey}" data-date="${dateKey}" data-type="start"
                                    value="${startValue}"
-                                   class="time-input w-full p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                                   class="time-input w-full p-0.5 md:p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                                    onchange="handleTimeChange(this)"
                             >
                         </div>
-                        <div class="flex items-center space-x-2">
-                            <label for="end-${dateKey}" class="text-xs text-gray-500 w-10 shrink-0">下班:</label>
+                        <div class="flex items-center space-x-1 md:space-x-2">
+                            <label for="end-${dateKey}" class="text-xs text-gray-500 w-8 md:w-10 shrink-0">下班:</label>
                             <input type="time" id="end-${dateKey}" data-date="${dateKey}" data-type="end"
                                    value="${endValue}"
-                                   class="time-input w-full p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                                   class="time-input w-full p-0.5 md:p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                                    onchange="handleTimeChange(this)"
                             >
                         </div>
@@ -464,51 +541,32 @@
                 calendarBody.appendChild(cell);
             }
             
-            updateSummary(); // Calculate summary after rendering
-
+            updateSummary(); 
         }
 
-        // Global function called by input onchange
         window.handleTimeChange = function(inputElement) {
             const dateKey = inputElement.dataset.date;
-            const type = inputElement.dataset.type;
-            const newValue = inputElement.value;
-            
             const startInput = document.getElementById(`start-${dateKey}`);
             const endInput = document.getElementById(`end-${dateKey}`);
-            
-            const start = startInput.value;
-            const end = endInput.value;
-            
-            // Save the entry to Firestore (handles updating the calendarData cache internally)
-            saveTimeEntry(dateKey, start, end);
+            saveTimeEntry(dateKey, startInput.value, endInput.value);
         }
 
-        // Function to calculate and update total summary
         function updateSummary() {
             let totalDuration = 0;
-            
-            // Get number of days in current month
             const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
 
-            // Iterate through every day of the month to sum up hours (including defaults)
             for (let day = 1; day <= daysInMonth; day++) {
                 const date = new Date(currentYear, currentMonth, day);
-                const dayOfWeek = date.getDay(); // 0=Sun, ...
-                
+                const dayOfWeek = date.getDay(); 
                 const dateKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                 
-                // Check if we have saved data for this specific day
                 const savedData = calendarData[dateKey];
-                
                 let start, end;
                 
                 if (savedData) {
-                    // Use saved user overrides
                     start = savedData.start;
                     end = savedData.end;
                 } else {
-                    // Use system defaults if no data saved yet
                     const defaults = getDefaultTimes(dayOfWeek);
                     start = defaults.start;
                     end = defaults.end;
@@ -519,29 +577,29 @@
             
             const totalSalary = totalDuration * hourlyRate;
             
-            // Update UI elements
             document.getElementById('totalHours').textContent = totalDuration.toFixed(2);
             document.getElementById('hourlyRateDisplay').textContent = hourlyRate.toFixed(2);
             document.getElementById('totalSalary').textContent = totalSalary.toFixed(0);
             
-            // Update the formula text at the bottom
             const totalHoursAlt = document.getElementById('totalHours-alt');
             if (totalHoursAlt) totalHoursAlt.textContent = totalDuration.toFixed(2);
             
             const totalSalaryAlt = document.getElementById('totalSalary-alt');
             if (totalSalaryAlt) totalSalaryAlt.textContent = totalSalary.toFixed(0);
 
-            // Only update input if it's not currently focused to avoid interrupting user typing
             const rateInput = document.getElementById('hourlyRateInput');
             if (rateInput && document.activeElement !== rateInput) {
                 rateInput.value = hourlyRate.toFixed(0);
             }
         }
         
-        // Expose updateSummary globally so the button can call it
         window.updateSummary = updateSummary;
+        
+        // Print function
+        window.printPage = function() {
+            window.print();
+        }
 
-        // Initialize the application on window load
         window.onload = initializeAppAndAuth;
 
     </script>
@@ -552,16 +610,16 @@
         <h1 class="text-3xl font-extrabold text-indigo-800 mb-6 border-b pb-2">每月工時與薪資日曆</h1>
 
         <!-- Month/Year Navigation -->
-        <div class="flex flex-col md:flex-row items-center justify-between bg-white p-4 rounded-xl shadow-lg mb-6 space-y-4 md:space-y-0">
+        <div class="nav-container flex flex-col md:flex-row items-center justify-between bg-white p-4 rounded-xl shadow-lg mb-6 space-y-4 md:space-y-0">
             <div class="flex items-center space-x-4">
-                <button id="prevMonthBtn" class="p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
+                <button id="prevMonthBtn" class="month-nav-btn p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
                 </button>
                 <div class="text-2xl font-semibold text-gray-800 flex items-center space-x-2">
                      <select id="yearSelector" class="p-2 border rounded-md text-lg focus:ring-indigo-500 focus:border-indigo-500"></select>
                      <select id="monthSelector" class="p-2 border rounded-md text-lg focus:ring-indigo-500 focus:border-indigo-500"></select>
                 </div>
-                <button id="nextMonthBtn" class="p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
+                <button id="nextMonthBtn" class="month-nav-btn p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </button>
             </div>
@@ -587,20 +645,27 @@
         </div>
         
         <!-- Summary and Salary Calculation -->
-        <div class="mt-8 bg-indigo-50 p-6 rounded-xl shadow-lg">
+        <div class="summary-container mt-8 bg-indigo-50 p-6 rounded-xl shadow-lg">
             
-            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b border-indigo-300 pb-2">
+            <div class="summary-header flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b border-indigo-300 pb-2">
                 <h2 class="text-2xl font-bold text-indigo-800">薪資統計</h2>
-                <button type="button" onclick="updateSummary()" class="mt-2 sm:mt-0 flex items-center space-x-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition duration-150 shadow-md active:scale-95 transform">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                    <span>重新計算總時數</span>
-                </button>
+                <div class="flex space-x-2">
+                    <button type="button" onclick="updateSummary()" class="mt-2 sm:mt-0 flex items-center space-x-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition duration-150 shadow-md active:scale-95 transform">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        <span>重新計算總時數</span>
+                    </button>
+                    <!-- 新增：列印按鈕 -->
+                    <button type="button" onclick="printPage()" class="mt-2 sm:mt-0 flex items-center space-x-1 px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition duration-150 shadow-md active:scale-95 transform">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                        <span>列印本頁 (A4)</span>
+                    </button>
+                </div>
             </div>
             
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="summary-grid grid grid-cols-1 md:grid-cols-3 gap-6">
                 
                 <!-- 時薪輸入 -->
-                <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-indigo-500">
+                <div class="summary-item bg-white p-4 rounded-lg shadow-md border-l-4 border-indigo-500">
                     <label for="hourlyRateInput" class="block text-sm font-medium text-gray-700 mb-2">
                         時薪 (元)
                     </label>
@@ -611,38 +676,38 @@
                 </div>
                 
                 <!-- 總時數 -->
-                <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-green-500 flex flex-col justify-center">
+                <div class="summary-item bg-white p-4 rounded-lg shadow-md border-l-4 border-green-500 flex flex-col justify-center">
                     <p class="text-sm font-medium text-gray-700">總時數 (小時)</p>
-                    <p class="text-4xl font-extrabold text-green-700">
+                    <p class="text-4xl font-extrabold text-green-700 summary-text">
                         <span id="totalHours">0.00</span>
                     </p>
                 </div>
                 
                 <!-- 總薪資 -->
-                <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-red-500 flex flex-col justify-center">
+                <div class="summary-item bg-white p-4 rounded-lg shadow-md border-l-4 border-red-500 flex flex-col justify-center">
                     <p class="text-sm font-medium text-gray-700">總薪資 (元)</p>
-                    <p class="text-4xl font-extrabold text-red-700">
+                    <p class="text-4xl font-extrabold text-red-700 summary-text">
                         <span id="totalSalary">0</span>
                     </p>
                 </div>
             </div>
             
-             <p class="mt-4 text-sm text-gray-600 text-center">計算公式：總時數 (<span id="totalHours-alt">0.00</span>) × 時薪 (<span id="hourlyRateDisplay">0</span>) = 總薪資 (<span id="totalSalary-alt">0</span>)</p>
+             <p class="mt-4 text-sm text-gray-600 text-center no-print">計算公式：總時數 (<span id="totalHours-alt">0.00</span>) × 時薪 (<span id="hourlyRateDisplay">0</span>) = 總薪資 (<span id="totalSalary-alt">0</span>)</p>
 
-            <!-- 新增：簽名欄位區塊 (1行) -->
-            <div class="mt-12 border-t-2 border-indigo-200 pt-8 print:border-gray-300">
-                <div class="flex flex-col md:flex-row justify-between items-end gap-6">
+            <!-- 簽名欄位區塊 (1行) -->
+            <div class="signature-section mt-12 border-t-2 border-indigo-200 pt-8 print:border-gray-300">
+                <div class="signature-row flex flex-col md:flex-row justify-between items-end gap-6">
                     <div class="flex items-end w-full">
-                        <span class="text-lg font-bold text-gray-700 whitespace-nowrap mr-2">員工姓名：</span>
-                        <div class="border-b-2 border-gray-400 flex-grow h-8"></div>
+                        <span class="signature-label text-lg font-bold text-gray-700 whitespace-nowrap mr-2">員工姓名：</span>
+                        <div class="signature-line border-b-2 border-gray-400 flex-grow h-8"></div>
                     </div>
                     <div class="flex items-end w-full">
-                        <span class="text-lg font-bold text-gray-700 whitespace-nowrap mr-2">管理者：</span>
-                        <div class="border-b-2 border-gray-400 flex-grow h-8"></div>
+                        <span class="signature-label text-lg font-bold text-gray-700 whitespace-nowrap mr-2">管理者：</span>
+                        <div class="signature-line border-b-2 border-gray-400 flex-grow h-8"></div>
                     </div>
                     <div class="flex items-end w-full">
-                        <span class="text-lg font-bold text-gray-700 whitespace-nowrap mr-2">主管簽名：</span>
-                        <div class="border-b-2 border-gray-400 flex-grow h-8"></div>
+                        <span class="signature-label text-lg font-bold text-gray-700 whitespace-nowrap mr-2">主管簽名：</span>
+                        <div class="signature-line border-b-2 border-gray-400 flex-grow h-8"></div>
                     </div>
                 </div>
             </div>

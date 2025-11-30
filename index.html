@@ -28,10 +28,21 @@
             min-height: 120px;
             background-color: white;
             transition: all 0.2s;
+            position: relative; /* 用於定位 */
         }
         .day-cell:hover {
             background-color: #f7fafc;
         }
+        /* 跳過狀態的樣式 */
+        .day-cell.skipped-day {
+            background-color: #e5e7eb !important; /* gray-200 */
+            opacity: 0.7;
+        }
+        .day-cell.skipped-day .time-input {
+            text-decoration: line-through;
+            color: #6b7280;
+        }
+        
         .day-header {
             text-align: center;
             font-weight: 700;
@@ -129,6 +140,9 @@
             .day-cell.bg-indigo-50\/50, .day-cell.bg-gray-100 {
                 background-color: #f5f5f5 !important; /* 週末和空白日用淺灰 */
             }
+            .day-cell.skipped-day {
+                background-color: #ddd !important; /* 列印時跳過的天數顏色 */
+            }
             
             /* 輸入框改為純文字顯示效果 */
             input.time-input {
@@ -139,6 +153,20 @@
                 width: auto !important;
                 background: transparent !important;
             }
+            /* 隱藏 Checkbox 本體，改用文字 */
+            input[type="checkbox"] {
+                display: none !important;
+            }
+            .skip-label {
+                display: none !important;
+            }
+            .skipped-indicator {
+                display: block !important;
+                font-size: 8pt;
+                font-weight: bold;
+                color: #666;
+            }
+            
             label {
                 font-size: 8pt !important;
                 color: #333 !important;
@@ -273,16 +301,21 @@
             return doc(dbInstance, `artifacts/${appId}/users/${uid}/settings`, 'calendar_settings');
         }
 
-        async function saveTimeEntry(dateKey, start, end) {
+        // Modified to handle 'skipped' state
+        async function saveDayData(dateKey, start, end, skipped) {
             const duration = calculateDuration(start, end);
             const data = {
                 dateKey: dateKey,
                 start: start,
                 end: end,
+                skipped: skipped, // Store skipped state
                 duration: duration
             };
 
-            if (start === '' && end === '') {
+            // Optimistic UI update
+            // If empty AND not skipped, delete from cache (cleanup)
+            // But if skipped is true, we must keep it even if times are empty
+            if (start === '' && end === '' && !skipped) {
                 delete calendarData[dateKey];
             } else {
                 calendarData[dateKey] = data;
@@ -300,12 +333,12 @@
             const docRef = doc(db, collectionPath, dateKey);
 
             try {
-                if (start === '' && end === '') {
+                if (start === '' && end === '' && !skipped) {
                     await deleteDoc(docRef);
                     console.log(`Deleted empty entry for ${dateKey}`);
                 } else {
                     await setDoc(docRef, data);
-                    console.log(`Saved entry for ${dateKey}: ${start} - ${end}`);
+                    console.log(`Saved entry for ${dateKey}: ${start} - ${end}, Skipped: ${skipped}`);
                 }
             } catch (error) {
                 console.error("Error saving time entry:", error);
@@ -502,17 +535,33 @@
                 let { start: defaultStart, end: defaultEnd } = getDefaultTimes(dayOfWeek);
                 const startValue = savedData ? savedData.start : defaultStart;
                 const endValue = savedData ? savedData.end : defaultEnd;
+                // Get skipped state, default is false
+                const isSkipped = savedData && savedData.skipped ? true : false;
                 
                 const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
                 
                 const cell = document.createElement('div');
-                cell.className = `day-cell flex flex-col ${isWeekend ? 'bg-indigo-50/50' : ''}`;
+                cell.id = `cell-${dateKey}`;
+                // Apply specific classes if skipped
+                const skippedClasses = isSkipped ? 'skipped-day' : '';
+                const weekendClasses = isWeekend ? 'bg-indigo-50/50' : '';
+                cell.className = `day-cell flex flex-col ${weekendClasses} ${skippedClasses}`;
                 
                 const dayName = ['日', '一', '二', '三', '四', '五', '六'][dayOfWeek];
                 const dayHeader = `
                     <div class="flex justify-between items-center mb-1 md:mb-2">
-                        <span class="text-lg md:text-xl font-bold text-indigo-700">${day}</span>
-                        <span class="text-xs md:text-sm font-medium ${isWeekend ? 'text-red-500' : 'text-gray-600'}">週${dayName}</span>
+                        <div class="flex items-center space-x-1">
+                            <span class="text-lg md:text-xl font-bold text-indigo-700">${day}</span>
+                            <span class="text-xs md:text-sm font-medium ${isWeekend ? 'text-red-500' : 'text-gray-600'}">週${dayName}</span>
+                        </div>
+                        <div class="flex items-center">
+                             <input type="checkbox" id="skip-${dateKey}" data-date="${dateKey}" 
+                                    class="mr-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
+                                    ${isSkipped ? 'checked' : ''}
+                                    onchange="handleDataChange(this)">
+                             <label for="skip-${dateKey}" class="text-xs text-gray-500 cursor-pointer select-none skip-label">跳過</label>
+                             <span class="hidden skipped-indicator">不計</span>
+                        </div>
                     </div>
                 `;
 
@@ -523,7 +572,7 @@
                             <input type="time" id="start-${dateKey}" data-date="${dateKey}" data-type="start"
                                    value="${startValue}"
                                    class="time-input w-full p-0.5 md:p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                                   onchange="handleTimeChange(this)"
+                                   onchange="handleDataChange(this)"
                             >
                         </div>
                         <div class="flex items-center space-x-1 md:space-x-2">
@@ -531,7 +580,7 @@
                             <input type="time" id="end-${dateKey}" data-date="${dateKey}" data-type="end"
                                    value="${endValue}"
                                    class="time-input w-full p-0.5 md:p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                                   onchange="handleTimeChange(this)"
+                                   onchange="handleDataChange(this)"
                             >
                         </div>
                     </div>
@@ -544,11 +593,28 @@
             updateSummary(); 
         }
 
-        window.handleTimeChange = function(inputElement) {
-            const dateKey = inputElement.dataset.date;
+        // Consolidated handler for both time inputs and skip checkbox
+        window.handleDataChange = function(element) {
+            const dateKey = element.dataset.date;
+            
+            // Read all current values from the DOM to ensure we save the complete state
             const startInput = document.getElementById(`start-${dateKey}`);
             const endInput = document.getElementById(`end-${dateKey}`);
-            saveTimeEntry(dateKey, startInput.value, endInput.value);
+            const skipInput = document.getElementById(`skip-${dateKey}`);
+            const cell = document.getElementById(`cell-${dateKey}`);
+            
+            const start = startInput.value;
+            const end = endInput.value;
+            const skipped = skipInput.checked;
+            
+            // Visual Update immediately
+            if (skipped) {
+                cell.classList.add('skipped-day');
+            } else {
+                cell.classList.remove('skipped-day');
+            }
+
+            saveDayData(dateKey, start, end, skipped);
         }
 
         function updateSummary() {
@@ -561,6 +627,13 @@
                 const dateKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                 
                 const savedData = calendarData[dateKey];
+                
+                // --- Logic Update for Skips ---
+                // If the day is explicitly marked as skipped, do not count duration
+                if (savedData && savedData.skipped) {
+                    continue;
+                }
+                
                 let start, end;
                 
                 if (savedData) {

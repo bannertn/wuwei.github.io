@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>每月工時與薪資計算器</title>
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 Noto Sans TC 字體 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        /* 設定預設字體 */
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f0f4f8;
+        }
+        /* 自定義日曆網格樣式 */
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            border-left: 1px solid #e2e8f0;
+            border-top: 1px solid #e2e8f0;
+        }
+        .day-cell {
+            border-right: 1px solid #e2e8f0;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 8px;
+            min-height: 120px;
+            background-color: white;
+            transition: all 0.2s;
+        }
+        .day-cell:hover {
+            background-color: #f7fafc;
+        }
+        .day-header {
+            text-align: center;
+            font-weight: 700;
+            padding: 10px 0;
+            background-color: #4c51bf; /* Indigo/Blue for headers */
+            color: white;
+            border-right: 1px solid #667eea;
+        }
+        .day-header:last-child {
+            border-right: none;
+        }
+        /* 響應式調整 */
+        @media (max-width: 768px) {
+            .day-cell {
+                min-height: 100px;
+                padding: 4px;
+            }
+            .time-input {
+                font-size: 0.75rem; /* text-xs */
+                padding: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, updateDoc, collection, query, getDocs, where, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase variables will be populated at runtime by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : undefined;
+
+        // --- Global State and Initialization ---
+        let db;
+        let auth;
+        let userId = null;
+        let currentYear, currentMonth;
+        let calendarData = {}; // Cache for monthly data: { '2025-11-20': { start: '12:00', end: '18:00' } }
+        let settingsDocRef;
+        
+        // Settings/Summary State
+        let hourlyRate = 0; // 時薪
+        const DEFAULT_HOURLY_RATE = 190; // 台灣基本時薪
+
+        // Date initialization
+        const today = new Date();
+        currentYear = today.getFullYear();
+        currentMonth = today.getMonth(); // 0-11
+
+        setLogLevel('debug'); // Enable Firestore logging
+
+        // Utility function to convert time string (HH:MM) to minutes
+        function timeToMinutes(timeStr) {
+            if (!timeStr) return 0;
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            return hours * 60 + minutes;
+        }
+
+        // Utility function to calculate work duration in hours (decimal)
+        function calculateDuration(start, end) {
+            const startMins = timeToMinutes(start);
+            const endMins = timeToMinutes(end);
+            if (endMins > startMins) {
+                return (endMins - startMins) / 60;
+            }
+            return 0; // Invalid or no work duration
+        }
+
+        // Function to get default times based on day of week (0=Sun, 1=Mon, ..., 6=Sat)
+        function getDefaultTimes(dayOfWeek) {
+            // Monday(1), Wednesday(3), Thursday(4), Friday(5)
+            if ([1, 3, 4, 5].includes(dayOfWeek)) {
+                return { start: '12:00', end: '18:00' };
+            }
+            // Tuesday(2) - Special case
+            if (dayOfWeek === 2) {
+                return { start: '16:00', end: '18:00' };
+            }
+            // Weekend: Saturday(6), Sunday(0)
+            return { start: '', end: '' };
+        }
+
+        // --- Data Persistence (Firestore) ---
+
+        // Helper to get the path for the data collection (private data)
+        function getCollectionPath() {
+            if (!userId) {
+                console.error("Firestore: User ID is missing.");
+                return null;
+            }
+            // Private data path: /artifacts/{appId}/users/{userId}/{collectionName}
+            return `artifacts/${appId}/users/${userId}/work_entries`;
+        }
+        
+        // Helper to get the settings doc reference
+        function getSettingsDocRef(dbInstance, uid) {
+             if (!uid) {
+                console.error("Firestore: User ID is missing for settings.");
+                return null;
+            }
+            // Private data path: /artifacts/{appId}/users/{userId}/settings/{docId}
+            return doc(dbInstance, `artifacts/${appId}/users/${uid}/settings`, 'calendar_settings');
+        }
+
+
+        // Save a single day's time entry
+        async function saveTimeEntry(dateKey, start, end) {
+            if (!db || !userId) return;
+            const collectionPath = getCollectionPath();
+            if (!collectionPath) return;
+
+            // Use the dateKey (YYYY-MM-DD) as the document ID
+            const docRef = doc(db, collectionPath, dateKey);
+
+            try {
+                if (start === '' && end === '') {
+                    // If both are empty, delete the document if it exists to clean up
+                    if (calendarData[dateKey]) {
+                        await deleteDoc(docRef);
+                        delete calendarData[dateKey];
+                        console.log(`Deleted empty entry for ${dateKey}`);
+                    }
+                } else {
+                    const data = {
+                        dateKey: dateKey,
+                        start: start,
+                        end: end,
+                        duration: calculateDuration(start, end)
+                    };
+                    await setDoc(docRef, data);
+                    calendarData[dateKey] = data; // Update cache
+                    console.log(`Saved entry for ${dateKey}: ${start} - ${end}`);
+                }
+                updateSummary();
+            } catch (error) {
+                console.error("Error saving time entry:", error);
+            }
+        }
+
+        // Save hourly rate
+        async function saveHourlyRate() {
+            if (!settingsDocRef) return;
+            try {
+                await setDoc(settingsDocRef, { hourlyRate: hourlyRate }, { merge: true });
+                console.log(`Saved hourly rate: ${hourlyRate}`);
+            } catch (error) {
+                console.error("Error saving hourly rate:", error);
+            }
+        }
+
+        // Setup real-time listener for the current month's data
+        function setupDataListener() {
+            if (!db || !userId) return;
+            const collectionPath = getCollectionPath();
+            if (!collectionPath) return;
+            
+            // Start of the month to query (YYYY-MM-01)
+            const yearMonth = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+            const q = query(collection(db, collectionPath), 
+                where("dateKey", ">=", `${yearMonth}-01`), 
+                where("dateKey", "<=", `${yearMonth}-31`)); // Simple range query
+
+            // Listen for changes
+            onSnapshot(q, (snapshot) => {
+                calendarData = {}; // Clear cache for the current month
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    calendarData[data.dateKey] = data;
+                });
+                console.log(`Fetched ${snapshot.size} entries for the current month.`);
+                renderCalendar(currentYear, currentMonth); // Re-render the calendar
+                updateSummary(); // Recalculate summary
+            }, (error) => {
+                console.error("Error setting up data listener:", error);
+            });
+            
+             // Listen for hourly rate changes
+            onSnapshot(settingsDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    hourlyRate = data.hourlyRate || DEFAULT_HOURLY_RATE;
+                } else {
+                    // Set default if doc doesn't exist
+                    hourlyRate = DEFAULT_HOURLY_RATE;
+                }
+                const hourlyRateInput = document.getElementById('hourlyRateInput');
+                if (hourlyRateInput) {
+                     hourlyRateInput.value = hourlyRate;
+                     hourlyRateInput.dataset.initialValue = hourlyRate; // Store for comparison
+                }
+                updateSummary();
+            }, (error) => {
+                 console.error("Error setting up settings listener:", error);
+            });
+        }
+
+
+        // --- Authentication & Initialization ---
+
+        async function initializeAppAndAuth() {
+            if (!firebaseConfig.apiKey) {
+                console.warn("Firebase config is missing. Data persistence will not work.");
+                // Proceed without persistence setup
+                initializeUI();
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Sign in using custom token or anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // Wait for auth state change to get the user ID
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log("Firebase authenticated. User ID:", userId);
+                        settingsDocRef = getSettingsDocRef(db, userId);
+                        setupDataListener(); // Start listening for data once authenticated
+                    } else {
+                        userId = null;
+                        console.log("Firebase: Not authenticated.");
+                    }
+                    initializeUI();
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization or authentication failed:", error);
+                initializeUI(); // Initialize UI even if Firebase fails
+            }
+        }
+
+        // --- UI Rendering and Interaction ---
+
+        function initializeUI() {
+            // Set up month/year selectors
+            const monthSelector = document.getElementById('monthSelector');
+            const yearSelector = document.getElementById('yearSelector');
+
+            for (let i = 0; i < 12; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = (i + 1) + '月';
+                monthSelector.appendChild(option);
+            }
+            
+            for (let y = currentYear - 5; y <= currentYear + 5; y++) {
+                const option = document.createElement('option');
+                option.value = y;
+                option.textContent = y + '年';
+                yearSelector.appendChild(option);
+            }
+
+            monthSelector.value = currentMonth;
+            yearSelector.value = currentYear;
+
+            // Add event listeners for navigation and settings
+            document.getElementById('prevMonthBtn').addEventListener('click', () => navigateMonth(-1));
+            document.getElementById('nextMonthBtn').addEventListener('click', () => navigateMonth(1));
+            monthSelector.addEventListener('change', handleDateChange);
+            yearSelector.addEventListener('change', handleDateChange);
+            
+            const hourlyRateInput = document.getElementById('hourlyRateInput');
+            
+            // Initialize hourly rate input and set up delayed save
+            hourlyRate = hourlyRate || DEFAULT_HOURLY_RATE;
+            hourlyRateInput.value = hourlyRate;
+            
+            let saveRateTimeout;
+            hourlyRateInput.addEventListener('input', (e) => {
+                // Clear any pending save
+                clearTimeout(saveRateTimeout);
+                
+                const newValue = parseFloat(e.target.value);
+                if (isNaN(newValue) || newValue < 0) {
+                     // Optionally, revert or block invalid input
+                     return;
+                }
+                
+                hourlyRate = newValue;
+                updateSummary(); // Update UI immediately
+                
+                // Set a timeout to save to Firestore 1 second after the last input
+                saveRateTimeout = setTimeout(() => {
+                    if (userId) {
+                        saveHourlyRate();
+                    } else {
+                         console.warn("Not authenticated, hourly rate not saved to Firestore.");
+                    }
+                }, 1000);
+            });
+
+            if (!userId) {
+                // Initial render if authentication is not ready or failed
+                renderCalendar(currentYear, currentMonth);
+                updateSummary();
+            }
+            // If authenticated, render will be called by onSnapshot
+        }
+        
+        // Navigation function
+        function navigateMonth(delta) {
+            const date = new Date(currentYear, currentMonth + delta, 1);
+            currentYear = date.getFullYear();
+            currentMonth = date.getMonth();
+            
+            document.getElementById('monthSelector').value = currentMonth;
+            document.getElementById('yearSelector').value = currentYear;
+            
+            if (userId) {
+                // Re-render will be triggered by a new data listener setup/query
+                setupDataListener(); 
+            } else {
+                renderCalendar(currentYear, currentMonth);
+            }
+        }
+        
+        // Handle dropdown change
+        function handleDateChange() {
+             const newMonth = parseInt(document.getElementById('monthSelector').value);
+             const newYear = parseInt(document.getElementById('yearSelector').value);
+             
+             if (currentMonth !== newMonth || currentYear !== newYear) {
+                currentMonth = newMonth;
+                currentYear = newYear;
+                
+                if (userId) {
+                    setupDataListener(); 
+                } else {
+                    renderCalendar(currentYear, currentMonth);
+                }
+             }
+        }
+
+
+        // Function to render the calendar grid
+        function renderCalendar(year, month) {
+            const calendarBody = document.getElementById('calendarBody');
+            calendarBody.innerHTML = ''; // Clear previous days
+
+            // Get the first day of the month (0=Sun, 1=Mon, ..., 6=Sat)
+            const firstDayOfMonth = new Date(year, month, 1).getDay(); 
+            // Get the total number of days in the month
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            // 1. Add padding (empty cells) for days before the 1st
+            for (let i = 0; i < firstDayOfMonth; i++) {
+                const emptyCell = document.createElement('div');
+                emptyCell.className = 'day-cell bg-gray-100';
+                calendarBody.appendChild(emptyCell);
+            }
+
+            // 2. Add days of the month
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(year, month, day);
+                const dayOfWeek = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+                
+                const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const savedData = calendarData[dateKey];
+                
+                // Determine the times to display (saved data overrides defaults)
+                let { start: defaultStart, end: defaultEnd } = getDefaultTimes(dayOfWeek);
+                const startValue = savedData ? savedData.start : defaultStart;
+                const endValue = savedData ? savedData.end : defaultEnd;
+                
+                const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+                
+                const cell = document.createElement('div');
+                cell.className = `day-cell flex flex-col ${isWeekend ? 'bg-indigo-50/50' : ''}`;
+                
+                // Day number and weekday name
+                const dayName = ['日', '一', '二', '三', '四', '五', '六'][dayOfWeek];
+                const dayHeader = `
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xl font-bold text-indigo-700">${day}</span>
+                        <span class="text-sm font-medium ${isWeekend ? 'text-red-500' : 'text-gray-600'}">週${dayName}</span>
+                    </div>
+                `;
+
+                // Time inputs
+                const timeInputs = `
+                    <div class="space-y-1">
+                        <div class="flex items-center space-x-2">
+                            <label for="start-${dateKey}" class="text-xs text-gray-500 w-10 shrink-0">上班:</label>
+                            <input type="time" id="start-${dateKey}" data-date="${dateKey}" data-type="start"
+                                   value="${startValue}"
+                                   class="time-input w-full p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                                   onchange="handleTimeChange(this)"
+                            >
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <label for="end-${dateKey}" class="text-xs text-gray-500 w-10 shrink-0">下班:</label>
+                            <input type="time" id="end-${dateKey}" data-date="${dateKey}" data-type="end"
+                                   value="${endValue}"
+                                   class="time-input w-full p-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                                   onchange="handleTimeChange(this)"
+                            >
+                        </div>
+                    </div>
+                `;
+                
+                cell.innerHTML = dayHeader + timeInputs;
+                calendarBody.appendChild(cell);
+            }
+            
+            updateSummary(); // Calculate summary after rendering
+
+        }
+
+        // Global function called by input onchange
+        window.handleTimeChange = function(inputElement) {
+            const dateKey = inputElement.dataset.date;
+            const type = inputElement.dataset.type;
+            const newValue = inputElement.value;
+            
+            const startInput = document.getElementById(`start-${dateKey}`);
+            const endInput = document.getElementById(`end-${dateKey}`);
+            
+            const start = startInput.value;
+            const end = endInput.value;
+            
+            // Save the entry to Firestore (handles updating the calendarData cache internally)
+            saveTimeEntry(dateKey, start, end);
+        }
+
+        // Function to calculate and update total summary
+        function updateSummary() {
+            let totalDuration = 0;
+            
+            // Get number of days in current month
+            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+            // Iterate through every day of the month to sum up hours (including defaults)
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(currentYear, currentMonth, day);
+                const dayOfWeek = date.getDay(); // 0=Sun, ...
+                
+                const dateKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                
+                // Check if we have saved data for this specific day
+                const savedData = calendarData[dateKey];
+                
+                let start, end;
+                
+                if (savedData) {
+                    // Use saved user overrides
+                    start = savedData.start;
+                    end = savedData.end;
+                } else {
+                    // Use system defaults if no data saved yet
+                    const defaults = getDefaultTimes(dayOfWeek);
+                    start = defaults.start;
+                    end = defaults.end;
+                }
+                
+                totalDuration += calculateDuration(start, end);
+            }
+            
+            const totalSalary = totalDuration * hourlyRate;
+            
+            // Update UI elements
+            document.getElementById('totalHours').textContent = totalDuration.toFixed(2);
+            document.getElementById('hourlyRateDisplay').textContent = hourlyRate.toFixed(2);
+            document.getElementById('totalSalary').textContent = totalSalary.toFixed(0);
+            
+            // Update the formula text at the bottom
+            const totalHoursAlt = document.getElementById('totalHours-alt');
+            if (totalHoursAlt) totalHoursAlt.textContent = totalDuration.toFixed(2);
+            
+            const totalSalaryAlt = document.getElementById('totalSalary-alt');
+            if (totalSalaryAlt) totalSalaryAlt.textContent = totalSalary.toFixed(0);
+
+            // Only update input if it's not currently focused to avoid interrupting user typing
+            const rateInput = document.getElementById('hourlyRateInput');
+            if (rateInput && document.activeElement !== rateInput) {
+                rateInput.value = hourlyRate.toFixed(0);
+            }
+        }
+
+        // Initialize the application on window load
+        window.onload = initializeAppAndAuth;
+
+    </script>
+
+    <!-- Main Application Container -->
+    <div class="max-w-6xl mx-auto p-4 md:p-8">
+        
+        <h1 class="text-3xl font-extrabold text-indigo-800 mb-6 border-b pb-2">每月工時與薪資日曆</h1>
+
+        <!-- Month/Year Navigation -->
+        <div class="flex flex-col md:flex-row items-center justify-between bg-white p-4 rounded-xl shadow-lg mb-6 space-y-4 md:space-y-0">
+            <div class="flex items-center space-x-4">
+                <button id="prevMonthBtn" class="p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                </button>
+                <div class="text-2xl font-semibold text-gray-800 flex items-center space-x-2">
+                     <select id="yearSelector" class="p-2 border rounded-md text-lg focus:ring-indigo-500 focus:border-indigo-500"></select>
+                     <select id="monthSelector" class="p-2 border rounded-md text-lg focus:ring-indigo-500 focus:border-indigo-500"></select>
+                </div>
+                <button id="nextMonthBtn" class="p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Calendar Grid -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+            <!-- Day Headers -->
+            <div class="calendar-grid">
+                <div class="day-header bg-red-600">週日</div>
+                <div class="day-header">週一</div>
+                <div class="day-header">週二</div>
+                <div class="day-header">週三</div>
+                <div class="day-header">週四</div>
+                <div class="day-header">週五</div>
+                <div class="day-header bg-red-600">週六</div>
+            </div>
+
+            <!-- Calendar Body (Dynamically populated by JS) -->
+            <div id="calendarBody" class="calendar-grid">
+                <!-- Day cells will be inserted here -->
+            </div>
+        </div>
+        
+        <!-- Summary and Salary Calculation -->
+        <div class="mt-8 bg-indigo-50 p-6 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-bold text-indigo-800 mb-4 border-b border-indigo-300 pb-2">薪資統計</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                <!-- 時薪輸入 -->
+                <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-indigo-500">
+                    <label for="hourlyRateInput" class="block text-sm font-medium text-gray-700 mb-2">
+                        時薪 (元)
+                    </label>
+                    <input type="number" id="hourlyRateInput" value="190" min="0" step="1"
+                           class="w-full text-2xl font-bold text-indigo-700 p-2 border-2 border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150"
+                           placeholder="輸入時薪"
+                    >
+                </div>
+                
+                <!-- 總時數 -->
+                <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-green-500 flex flex-col justify-center">
+                    <p class="text-sm font-medium text-gray-700">總時數 (小時)</p>
+                    <p class="text-4xl font-extrabold text-green-700">
+                        <span id="totalHours">0.00</span>
+                    </p>
+                </div>
+                
+                <!-- 總薪資 -->
+                <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-red-500 flex flex-col justify-center">
+                    <p class="text-sm font-medium text-gray-700">總薪資 (元)</p>
+                    <p class="text-4xl font-extrabold text-red-700">
+                        <span id="totalSalary">0</span>
+                    </p>
+                </div>
+            </div>
+            
+             <p class="mt-4 text-sm text-gray-600 text-center">計算公式：總時數 (<span id="totalHours-alt">0.00</span>) × 時薪 (<span id="hourlyRateDisplay">0</span>) = 總薪資 (<span id="totalSalary-alt">0</span>)</p>
+
+        </div>
+
+    </div>
+
+</body>
+</html>

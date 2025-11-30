@@ -145,35 +145,49 @@
 
         // Save a single day's time entry
         async function saveTimeEntry(dateKey, start, end) {
-            if (!db || !userId) return;
+            // 1. 準備資料物件
+            const duration = calculateDuration(start, end);
+            const data = {
+                dateKey: dateKey,
+                start: start,
+                end: end,
+                duration: duration
+            };
+
+            // 2. 樂觀更新 (Optimistic Update)：無論後端是否成功，先更新本地快取和 UI
+            // 這樣可以確保「自動加總」永遠即時反應，不會失效
+            if (start === '' && end === '') {
+                delete calendarData[dateKey];
+            } else {
+                calendarData[dateKey] = data;
+            }
+            
+            // 立即重新計算總合
+            updateSummary();
+
+            // 3. 後端同步 (如果已登入)
+            if (!db || !userId) {
+                console.warn("User not logged in or DB not ready. Changes are local only.");
+                return;
+            }
+
             const collectionPath = getCollectionPath();
             if (!collectionPath) return;
 
-            // Use the dateKey (YYYY-MM-DD) as the document ID
             const docRef = doc(db, collectionPath, dateKey);
 
             try {
                 if (start === '' && end === '') {
-                    // If both are empty, delete the document if it exists to clean up
-                    if (calendarData[dateKey]) {
-                        await deleteDoc(docRef);
-                        delete calendarData[dateKey];
-                        console.log(`Deleted empty entry for ${dateKey}`);
-                    }
+                    // If both are empty, delete the document if it exists
+                    await deleteDoc(docRef);
+                    console.log(`Deleted empty entry for ${dateKey}`);
                 } else {
-                    const data = {
-                        dateKey: dateKey,
-                        start: start,
-                        end: end,
-                        duration: calculateDuration(start, end)
-                    };
                     await setDoc(docRef, data);
-                    calendarData[dateKey] = data; // Update cache
                     console.log(`Saved entry for ${dateKey}: ${start} - ${end}`);
                 }
-                updateSummary();
             } catch (error) {
                 console.error("Error saving time entry:", error);
+                // 選項：如果存檔失敗，可以在這裡顯示錯誤提示，或者回滾數據
             }
         }
 

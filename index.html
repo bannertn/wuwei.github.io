@@ -523,6 +523,9 @@
                 rateInput.value = hourlyRate.toFixed(0);
             }
         }
+        
+        // Expose updateSummary globally so the button can call it
+        window.updateSummary = updateSummary;
 
         // Initialize the application on window load
         window.onload = initializeAppAndAuth;
@@ -571,7 +574,14 @@
         
         <!-- Summary and Salary Calculation -->
         <div class="mt-8 bg-indigo-50 p-6 rounded-xl shadow-lg">
-            <h2 class="text-2xl font-bold text-indigo-800 mb-4 border-b border-indigo-300 pb-2">薪資統計</h2>
+            
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b border-indigo-300 pb-2">
+                <h2 class="text-2xl font-bold text-indigo-800">薪資統計</h2>
+                <button type="button" onclick="updateSummary()" class="mt-2 sm:mt-0 flex items-center space-x-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition duration-150 shadow-md active:scale-95 transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    <span>重新計算總時數</span>
+                </button>
+            </div>
             
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 

@@ -55,22 +55,6 @@
             border-right: none;
         }
         
-        /* Markdown style for AI response */
-        .ai-response {
-            white-space: pre-wrap;
-            line-height: 1.6;
-        }
-        .ai-response strong {
-            font-weight: 700;
-            color: #4338ca;
-        }
-        .ai-response ul {
-            list-style-type: disc;
-            padding-left: 1.5rem;
-            margin-top: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-
         /* 響應式調整 */
         @media (max-width: 768px) {
             .day-cell {
@@ -701,116 +685,12 @@
             if (rateInput && document.activeElement !== rateInput) {
                 rateInput.value = hourlyRate.toFixed(0);
             }
-
-            // Expose for AI
-            window.currentMonthData = {
-                year: currentYear,
-                month: currentMonth + 1,
-                totalHours: totalDuration.toFixed(2),
-                hourlyRate: hourlyRate,
-                estimatedSalary: totalSalary.toFixed(0),
-                dailyDetails: summaryData
-            };
         }
         
         window.updateSummary = updateSummary;
         
         window.printPage = function() {
             window.print();
-        }
-
-        // --- GEMINI AI INTEGRATION ---
-        
-        async function callGemini(prompt, systemInstruction = "") {
-            const apiKey = ""; // Runtime injection
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-            
-            const payload = {
-                contents: [{ parts: [{ text: prompt }] }],
-                systemInstruction: { parts: [{ text: systemInstruction }] }
-            };
-
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`API Error: ${response.status} - ${errorText}`);
-                }
-
-                const result = await response.json();
-                return result.candidates?.[0]?.content?.parts?.[0]?.text || "無法取得回應，請稍後再試。";
-            } catch (error) {
-                console.error("Gemini API Error:", error);
-                return `發生錯誤: ${error.message}. 請確認您的 API 金鑰。`;
-            }
-        }
-
-        window.analyzeWorkHours = async function() {
-            const btn = document.getElementById('analyzeBtn');
-            const resultDiv = document.getElementById('analysisResult');
-            const data = window.currentMonthData;
-
-            btn.disabled = true;
-            btn.innerHTML = '✨ 分析中...';
-            resultDiv.innerHTML = '<p class="text-gray-500 animate-pulse">AI 正在分析您的工時數據...</p>';
-
-            const systemPrompt = "你是一位專業的 HR 與薪資分析專家，熟悉台灣勞基法。請使用繁體中文回答。";
-            const userPrompt = `請分析以下這個月的工時數據。
-            
-            摘要：
-            - 年份/月份: ${data.year}年 ${data.month}月
-            - 總工時: ${data.totalHours} 小時
-            - 時薪: ${data.hourlyRate} 元
-            - 預估薪資: ${data.estimatedSalary} 元
-            
-            請提供一份簡短的分析報告，包含：
-            1. **工作強度評估**：根據總時數判斷是否過勞或工時不足。
-            2. **收入分析**：針對這個預估薪資給予評語。
-            3. **健康與生活建議**：給予員工一段溫暖的建議。
-            
-            請使用友善、專業的語氣。`;
-
-            const response = await callGemini(userPrompt, systemPrompt);
-            
-            resultDiv.innerHTML = `<div class="ai-response text-gray-700 bg-white p-4 rounded border border-purple-100 shadow-sm">${formatMarkdown(response)}</div>`;
-            btn.disabled = false;
-            btn.innerHTML = '✨ 生成本月分析報告';
-        };
-
-        window.askAI = async function() {
-            const input = document.getElementById('askInput');
-            const btn = document.getElementById('askBtn');
-            const resultDiv = document.getElementById('askResult');
-            const question = input.value.trim();
-
-            if (!question) return;
-
-            btn.disabled = true;
-            btn.textContent = '思考中...';
-            resultDiv.innerHTML = '<p class="text-gray-500 animate-pulse">AI 正在查詢相關法規...</p>';
-
-            const data = window.currentMonthData;
-            const systemPrompt = `你是一位精通台灣勞動基準法 (Labor Standards Act) 的顧問。目前使用者的時薪設定為 ${data.hourlyRate} 元。請針對使用者的提問給予準確的法律見解或計算建議。請用繁體中文回答。`;
-            
-            const response = await callGemini(question, systemPrompt);
-            
-            resultDiv.innerHTML = `<div class="ai-response text-gray-700 bg-white p-4 rounded border border-blue-100 shadow-sm">${formatMarkdown(response)}</div>`;
-            btn.disabled = false;
-            btn.textContent = '送出詢問';
-        };
-
-        // Simple markdown formatter
-        function formatMarkdown(text) {
-            // Convert bold **text** to <strong>text</strong>
-            let formatted = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            // Convert list items - or * to bullets (simple check)
-            // Just let whitespace-pre-wrap handle lines, but maybe highlight bullets
-            return formatted;
         }
 
         window.onload = initializeAppAndAuth;
@@ -925,62 +805,6 @@
                 </div>
             </div>
 
-        </div>
-
-        <!-- NEW: AI Assistant Section (Hidden on Print) -->
-        <div class="no-print mt-8 bg-gradient-to-r from-purple-50 to-indigo-50 p-6 rounded-xl shadow-lg border border-indigo-100">
-            <h2 class="text-2xl font-bold text-indigo-800 mb-6 flex items-center">
-                <span class="mr-2 text-3xl">✨</span> AI 智慧工時助手
-            </h2>
-            
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                
-                <!-- AI Work Analysis -->
-                <div class="bg-white/80 p-5 rounded-lg border border-purple-100 shadow-sm flex flex-col">
-                    <div class="mb-4">
-                        <h3 class="text-lg font-bold text-gray-700 mb-1 flex items-center">
-                            <svg class="w-5 h-5 mr-2 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
-                            本月工時智能分析
-                        </h3>
-                        <p class="text-sm text-gray-500">AI 將根據本月數據分析您的工時與收入結構。</p>
-                    </div>
-                    
-                    <div id="analysisResult" class="flex-grow mb-4 text-sm bg-gray-50 rounded p-3 min-h-[100px] border border-gray-200">
-                        <p class="text-gray-400 italic">點擊按鈕生成報告...</p>
-                    </div>
-                    
-                    <button id="analyzeBtn" onclick="analyzeWorkHours()" class="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition shadow-md flex justify-center items-center">
-                        ✨ 生成本月分析報告
-                    </button>
-                </div>
-
-                <!-- AI Labor Consultant -->
-                <div class="bg-white/80 p-5 rounded-lg border border-blue-100 shadow-sm flex flex-col">
-                    <div class="mb-4">
-                        <h3 class="text-lg font-bold text-gray-700 mb-1 flex items-center">
-                            <svg class="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
-                            勞動法規諮詢
-                        </h3>
-                        <p class="text-sm text-gray-500">有關於薪資、加班費或休假的疑問嗎？</p>
-                    </div>
-                    
-                    <div class="flex-grow flex flex-col space-y-3">
-                        <div id="askResult" class="flex-grow text-sm bg-gray-50 rounded p-3 min-h-[100px] border border-gray-200 max-h-60 overflow-y-auto">
-                            <p class="text-gray-400 italic">AI 顧問隨時為您服務...</p>
-                        </div>
-                        
-                        <div class="flex space-x-2">
-                            <input id="askInput" type="text" placeholder="例如：國定假日上班薪水怎麼算？" 
-                                   class="flex-grow px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                   onkeydown="if(event.key === 'Enter') askAI()">
-                            <button id="askBtn" onclick="askAI()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition shadow-md whitespace-nowrap">
-                                送出
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
         </div>
 
     </div>

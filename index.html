@@ -54,6 +54,23 @@
         .day-header:last-child {
             border-right: none;
         }
+        
+        /* Markdown style for AI response */
+        .ai-response {
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+        .ai-response strong {
+            font-weight: 700;
+            color: #4338ca;
+        }
+        .ai-response ul {
+            list-style-type: disc;
+            padding-left: 1.5rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
         /* 響應式調整 */
         @media (max-width: 768px) {
             .day-cell {
@@ -153,18 +170,17 @@
                 width: auto !important;
                 background: transparent !important;
             }
-            /* 隱藏 Checkbox 本體，改用文字 */
-            input[type="checkbox"] {
+            /* 隱藏 Checkbox 本體與標籤 */
+            input[type="checkbox"], .skip-label {
                 display: none !important;
             }
-            .skip-label {
-                display: none !important;
-            }
-            .skipped-indicator {
-                display: block !important;
-                font-size: 8pt;
+            
+            /* 新增：列印時顯示的時數文字 */
+            .print-hours-display {
+                display: block !important; /* 在列印時顯示 */
+                font-size: 9pt;
                 font-weight: bold;
-                color: #666;
+                color: #444;
             }
             
             label {
@@ -313,8 +329,6 @@
             };
 
             // Optimistic UI update
-            // If empty AND not skipped, delete from cache (cleanup)
-            // But if skipped is true, we must keep it even if times are empty
             if (start === '' && end === '' && !skipped) {
                 delete calendarData[dateKey];
             } else {
@@ -538,6 +552,10 @@
                 // Get skipped state, default is false
                 const isSkipped = savedData && savedData.skipped ? true : false;
                 
+                // Calculate hours for print display
+                const duration = calculateDuration(startValue, endValue);
+                const printHoursText = isSkipped ? "0小時" : `${duration.toFixed(1)}小時`;
+                
                 const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
                 
                 const cell = document.createElement('div');
@@ -555,12 +573,17 @@
                             <span class="text-xs md:text-sm font-medium ${isWeekend ? 'text-red-500' : 'text-gray-600'}">週${dayName}</span>
                         </div>
                         <div class="flex items-center">
+                             <!-- 正常網頁檢視：顯示 Checkbox -->
                              <input type="checkbox" id="skip-${dateKey}" data-date="${dateKey}" 
                                     class="mr-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
                                     ${isSkipped ? 'checked' : ''}
                                     onchange="handleDataChange(this)">
                              <label for="skip-${dateKey}" class="text-xs text-gray-500 cursor-pointer select-none skip-label">跳過</label>
-                             <span class="hidden skipped-indicator">不計</span>
+                             
+                             <!-- 列印模式檢視：顯示時數 -->
+                             <span id="print-hours-${dateKey}" class="hidden print-hours-display">
+                                ${printHoursText}
+                             </span>
                         </div>
                     </div>
                 `;
@@ -593,15 +616,14 @@
             updateSummary(); 
         }
 
-        // Consolidated handler for both time inputs and skip checkbox
         window.handleDataChange = function(element) {
             const dateKey = element.dataset.date;
             
-            // Read all current values from the DOM to ensure we save the complete state
             const startInput = document.getElementById(`start-${dateKey}`);
             const endInput = document.getElementById(`end-${dateKey}`);
             const skipInput = document.getElementById(`skip-${dateKey}`);
             const cell = document.getElementById(`cell-${dateKey}`);
+            const printHoursSpan = document.getElementById(`print-hours-${dateKey}`);
             
             const start = startInput.value;
             const end = endInput.value;
@@ -614,12 +636,20 @@
                 cell.classList.remove('skipped-day');
             }
 
+            // Update Print Text immediately
+            const duration = calculateDuration(start, end);
+            const printHoursText = skipped ? "0小時" : `${duration.toFixed(1)}小時`;
+            if(printHoursSpan) {
+                printHoursSpan.textContent = printHoursText;
+            }
+
             saveDayData(dateKey, start, end, skipped);
         }
 
         function updateSummary() {
             let totalDuration = 0;
             const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+            const summaryData = [];
 
             for (let day = 1; day <= daysInMonth; day++) {
                 const date = new Date(currentYear, currentMonth, day);
@@ -628,24 +658,31 @@
                 
                 const savedData = calendarData[dateKey];
                 
-                // --- Logic Update for Skips ---
-                // If the day is explicitly marked as skipped, do not count duration
-                if (savedData && savedData.skipped) {
-                    continue;
-                }
-                
-                let start, end;
-                
+                // For AI: Collect data even if skipped, mark it
+                let start, end, isSkipped = false;
+
                 if (savedData) {
                     start = savedData.start;
                     end = savedData.end;
+                    isSkipped = savedData.skipped || false;
                 } else {
                     const defaults = getDefaultTimes(dayOfWeek);
                     start = defaults.start;
                     end = defaults.end;
                 }
-                
-                totalDuration += calculateDuration(start, end);
+
+                if (!isSkipped) {
+                    totalDuration += calculateDuration(start, end);
+                }
+
+                summaryData.push({
+                    date: dateKey,
+                    dayOfWeek: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek],
+                    start,
+                    end,
+                    hours: calculateDuration(start, end),
+                    skipped: isSkipped
+                });
             }
             
             const totalSalary = totalDuration * hourlyRate;
@@ -664,13 +701,116 @@
             if (rateInput && document.activeElement !== rateInput) {
                 rateInput.value = hourlyRate.toFixed(0);
             }
+
+            // Expose for AI
+            window.currentMonthData = {
+                year: currentYear,
+                month: currentMonth + 1,
+                totalHours: totalDuration.toFixed(2),
+                hourlyRate: hourlyRate,
+                estimatedSalary: totalSalary.toFixed(0),
+                dailyDetails: summaryData
+            };
         }
         
         window.updateSummary = updateSummary;
         
-        // Print function
         window.printPage = function() {
             window.print();
+        }
+
+        // --- GEMINI AI INTEGRATION ---
+        
+        async function callGemini(prompt, systemInstruction = "") {
+            const apiKey = ""; // Runtime injection
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] }
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`API Error: ${response.status} - ${errorText}`);
+                }
+
+                const result = await response.json();
+                return result.candidates?.[0]?.content?.parts?.[0]?.text || "無法取得回應，請稍後再試。";
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                return `發生錯誤: ${error.message}. 請確認您的 API 金鑰。`;
+            }
+        }
+
+        window.analyzeWorkHours = async function() {
+            const btn = document.getElementById('analyzeBtn');
+            const resultDiv = document.getElementById('analysisResult');
+            const data = window.currentMonthData;
+
+            btn.disabled = true;
+            btn.innerHTML = '✨ 分析中...';
+            resultDiv.innerHTML = '<p class="text-gray-500 animate-pulse">AI 正在分析您的工時數據...</p>';
+
+            const systemPrompt = "你是一位專業的 HR 與薪資分析專家，熟悉台灣勞基法。請使用繁體中文回答。";
+            const userPrompt = `請分析以下這個月的工時數據。
+            
+            摘要：
+            - 年份/月份: ${data.year}年 ${data.month}月
+            - 總工時: ${data.totalHours} 小時
+            - 時薪: ${data.hourlyRate} 元
+            - 預估薪資: ${data.estimatedSalary} 元
+            
+            請提供一份簡短的分析報告，包含：
+            1. **工作強度評估**：根據總時數判斷是否過勞或工時不足。
+            2. **收入分析**：針對這個預估薪資給予評語。
+            3. **健康與生活建議**：給予員工一段溫暖的建議。
+            
+            請使用友善、專業的語氣。`;
+
+            const response = await callGemini(userPrompt, systemPrompt);
+            
+            resultDiv.innerHTML = `<div class="ai-response text-gray-700 bg-white p-4 rounded border border-purple-100 shadow-sm">${formatMarkdown(response)}</div>`;
+            btn.disabled = false;
+            btn.innerHTML = '✨ 生成本月分析報告';
+        };
+
+        window.askAI = async function() {
+            const input = document.getElementById('askInput');
+            const btn = document.getElementById('askBtn');
+            const resultDiv = document.getElementById('askResult');
+            const question = input.value.trim();
+
+            if (!question) return;
+
+            btn.disabled = true;
+            btn.textContent = '思考中...';
+            resultDiv.innerHTML = '<p class="text-gray-500 animate-pulse">AI 正在查詢相關法規...</p>';
+
+            const data = window.currentMonthData;
+            const systemPrompt = `你是一位精通台灣勞動基準法 (Labor Standards Act) 的顧問。目前使用者的時薪設定為 ${data.hourlyRate} 元。請針對使用者的提問給予準確的法律見解或計算建議。請用繁體中文回答。`;
+            
+            const response = await callGemini(question, systemPrompt);
+            
+            resultDiv.innerHTML = `<div class="ai-response text-gray-700 bg-white p-4 rounded border border-blue-100 shadow-sm">${formatMarkdown(response)}</div>`;
+            btn.disabled = false;
+            btn.textContent = '送出詢問';
+        };
+
+        // Simple markdown formatter
+        function formatMarkdown(text) {
+            // Convert bold **text** to <strong>text</strong>
+            let formatted = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            // Convert list items - or * to bullets (simple check)
+            // Just let whitespace-pre-wrap handle lines, but maybe highlight bullets
+            return formatted;
         }
 
         window.onload = initializeAppAndAuth;
@@ -727,7 +867,7 @@
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                         <span>重新計算總時數</span>
                     </button>
-                    <!-- 新增：列印按鈕 -->
+                    <!-- 列印按鈕 -->
                     <button type="button" onclick="printPage()" class="mt-2 sm:mt-0 flex items-center space-x-1 px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition duration-150 shadow-md active:scale-95 transform">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                         <span>列印本頁 (A4)</span>
@@ -785,6 +925,62 @@
                 </div>
             </div>
 
+        </div>
+
+        <!-- NEW: AI Assistant Section (Hidden on Print) -->
+        <div class="no-print mt-8 bg-gradient-to-r from-purple-50 to-indigo-50 p-6 rounded-xl shadow-lg border border-indigo-100">
+            <h2 class="text-2xl font-bold text-indigo-800 mb-6 flex items-center">
+                <span class="mr-2 text-3xl">✨</span> AI 智慧工時助手
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                
+                <!-- AI Work Analysis -->
+                <div class="bg-white/80 p-5 rounded-lg border border-purple-100 shadow-sm flex flex-col">
+                    <div class="mb-4">
+                        <h3 class="text-lg font-bold text-gray-700 mb-1 flex items-center">
+                            <svg class="w-5 h-5 mr-2 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                            本月工時智能分析
+                        </h3>
+                        <p class="text-sm text-gray-500">AI 將根據本月數據分析您的工時與收入結構。</p>
+                    </div>
+                    
+                    <div id="analysisResult" class="flex-grow mb-4 text-sm bg-gray-50 rounded p-3 min-h-[100px] border border-gray-200">
+                        <p class="text-gray-400 italic">點擊按鈕生成報告...</p>
+                    </div>
+                    
+                    <button id="analyzeBtn" onclick="analyzeWorkHours()" class="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition shadow-md flex justify-center items-center">
+                        ✨ 生成本月分析報告
+                    </button>
+                </div>
+
+                <!-- AI Labor Consultant -->
+                <div class="bg-white/80 p-5 rounded-lg border border-blue-100 shadow-sm flex flex-col">
+                    <div class="mb-4">
+                        <h3 class="text-lg font-bold text-gray-700 mb-1 flex items-center">
+                            <svg class="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                            勞動法規諮詢
+                        </h3>
+                        <p class="text-sm text-gray-500">有關於薪資、加班費或休假的疑問嗎？</p>
+                    </div>
+                    
+                    <div class="flex-grow flex flex-col space-y-3">
+                        <div id="askResult" class="flex-grow text-sm bg-gray-50 rounded p-3 min-h-[100px] border border-gray-200 max-h-60 overflow-y-auto">
+                            <p class="text-gray-400 italic">AI 顧問隨時為您服務...</p>
+                        </div>
+                        
+                        <div class="flex space-x-2">
+                            <input id="askInput" type="text" placeholder="例如：國定假日上班薪水怎麼算？" 
+                                   class="flex-grow px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                   onkeydown="if(event.key === 'Enter') askAI()">
+                            <button id="askBtn" onclick="askAI()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition shadow-md whitespace-nowrap">
+                                送出
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
         </div>
 
     </div>

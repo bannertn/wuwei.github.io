@@ -35,12 +35,7 @@
         }
         /* 跳過狀態的樣式 */
         .day-cell.skipped-day {
-            background-color: #e5e7eb !important; /* gray-200 */
-            opacity: 0.7;
-        }
-        .day-cell.skipped-day .time-input {
-            text-decoration: line-through;
-            color: #6b7280;
+            background-color: #f3f4f6 !important; /* gray-100 */
         }
         
         .day-header {
@@ -159,12 +154,12 @@
                 display: none !important;
             }
             
-            /* 新增：列印時顯示的時數文字 */
+            /* 新增：列印時顯示的時數或休假文字 */
             .print-hours-display {
                 display: block !important; /* 在列印時顯示 */
-                font-size: 9pt;
+                font-size: 10pt;
                 font-weight: bold;
-                color: #444;
+                color: #000;
             }
             
             label {
@@ -301,18 +296,16 @@
             return doc(dbInstance, `artifacts/${appId}/users/${uid}/settings`, 'calendar_settings');
         }
 
-        // Modified to handle 'skipped' state
         async function saveDayData(dateKey, start, end, skipped) {
             const duration = calculateDuration(start, end);
             const data = {
                 dateKey: dateKey,
                 start: start,
                 end: end,
-                skipped: skipped, // Store skipped state
+                skipped: skipped, 
                 duration: duration
             };
 
-            // Optimistic UI update
             if (start === '' && end === '' && !skipped) {
                 delete calendarData[dateKey];
             } else {
@@ -333,10 +326,8 @@
             try {
                 if (start === '' && end === '' && !skipped) {
                     await deleteDoc(docRef);
-                    console.log(`Deleted empty entry for ${dateKey}`);
                 } else {
                     await setDoc(docRef, data);
-                    console.log(`Saved entry for ${dateKey}: ${start} - ${end}, Skipped: ${skipped}`);
                 }
             } catch (error) {
                 console.error("Error saving time entry:", error);
@@ -347,7 +338,6 @@
             if (!settingsDocRef) return;
             try {
                 await setDoc(settingsDocRef, { hourlyRate: hourlyRate }, { merge: true });
-                console.log(`Saved hourly rate: ${hourlyRate}`);
             } catch (error) {
                 console.error("Error saving hourly rate:", error);
             }
@@ -533,18 +523,16 @@
                 let { start: defaultStart, end: defaultEnd } = getDefaultTimes(dayOfWeek);
                 const startValue = savedData ? savedData.start : defaultStart;
                 const endValue = savedData ? savedData.end : defaultEnd;
-                // Get skipped state, default is false
                 const isSkipped = savedData && savedData.skipped ? true : false;
                 
-                // Calculate hours for print display
                 const duration = calculateDuration(startValue, endValue);
-                const printHoursText = isSkipped ? "0小時" : `${duration.toFixed(1)}小時`;
+                // 修改：列印時的文字，如果是跳過則顯示「休假」
+                const printText = isSkipped ? "休假" : `${duration.toFixed(1)}小時`;
                 
                 const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
                 
                 const cell = document.createElement('div');
                 cell.id = `cell-${dateKey}`;
-                // Apply specific classes if skipped
                 const skippedClasses = isSkipped ? 'skipped-day' : '';
                 const weekendClasses = isWeekend ? 'bg-indigo-50/50' : '';
                 cell.className = `day-cell flex flex-col ${weekendClasses} ${skippedClasses}`;
@@ -557,23 +545,22 @@
                             <span class="text-xs md:text-sm font-medium ${isWeekend ? 'text-red-500' : 'text-gray-600'}">週${dayName}</span>
                         </div>
                         <div class="flex items-center">
-                             <!-- 正常網頁檢視：顯示 Checkbox -->
                              <input type="checkbox" id="skip-${dateKey}" data-date="${dateKey}" 
                                     class="mr-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
                                     ${isSkipped ? 'checked' : ''}
                                     onchange="handleDataChange(this)">
                              <label for="skip-${dateKey}" class="text-xs text-gray-500 cursor-pointer select-none skip-label">跳過</label>
                              
-                             <!-- 列印模式檢視：顯示時數 -->
                              <span id="print-hours-${dateKey}" class="hidden print-hours-display">
-                                ${printHoursText}
+                                ${printText}
                              </span>
                         </div>
                     </div>
                 `;
 
-                const timeInputs = `
-                    <div class="space-y-0.5 md:space-y-1">
+                // 修改：時間輸入容器與休假標籤容器
+                const contentHtml = `
+                    <div id="time-container-${dateKey}" class="space-y-0.5 md:space-y-1 ${isSkipped ? 'hidden' : 'block'}">
                         <div class="flex items-center space-x-1 md:space-x-2">
                             <label for="start-${dateKey}" class="text-xs text-gray-500 w-8 md:w-10 shrink-0">上班:</label>
                             <input type="time" id="start-${dateKey}" data-date="${dateKey}" data-type="start"
@@ -591,9 +578,12 @@
                             >
                         </div>
                     </div>
+                    <div id="vacation-label-${dateKey}" class="flex-grow flex items-center justify-center ${isSkipped ? 'block' : 'hidden'}">
+                        <span class="text-2xl font-bold text-gray-400 select-none">休假</span>
+                    </div>
                 `;
                 
-                cell.innerHTML = dayHeader + timeInputs;
+                cell.innerHTML = dayHeader + contentHtml;
                 calendarBody.appendChild(cell);
             }
             
@@ -608,23 +598,28 @@
             const skipInput = document.getElementById(`skip-${dateKey}`);
             const cell = document.getElementById(`cell-${dateKey}`);
             const printHoursSpan = document.getElementById(`print-hours-${dateKey}`);
+            const timeContainer = document.getElementById(`time-container-${dateKey}`);
+            const vacationLabel = document.getElementById(`vacation-label-${dateKey}`);
             
             const start = startInput.value;
             const end = endInput.value;
             const skipped = skipInput.checked;
             
-            // Visual Update immediately
+            // 即時更新 UI
             if (skipped) {
                 cell.classList.add('skipped-day');
+                timeContainer.classList.replace('block', 'hidden');
+                vacationLabel.classList.replace('hidden', 'block');
             } else {
                 cell.classList.remove('skipped-day');
+                timeContainer.classList.replace('hidden', 'block');
+                vacationLabel.classList.replace('block', 'hidden');
             }
 
-            // Update Print Text immediately
             const duration = calculateDuration(start, end);
-            const printHoursText = skipped ? "0小時" : `${duration.toFixed(1)}小時`;
+            const printText = skipped ? "休假" : `${duration.toFixed(1)}小時`;
             if(printHoursSpan) {
-                printHoursSpan.textContent = printHoursText;
+                printHoursSpan.textContent = printText;
             }
 
             saveDayData(dateKey, start, end, skipped);
@@ -633,16 +628,11 @@
         function updateSummary() {
             let totalDuration = 0;
             const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-            const summaryData = [];
 
             for (let day = 1; day <= daysInMonth; day++) {
-                const date = new Date(currentYear, currentMonth, day);
-                const dayOfWeek = date.getDay(); 
                 const dateKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                
                 const savedData = calendarData[dateKey];
                 
-                // For AI: Collect data even if skipped, mark it
                 let start, end, isSkipped = false;
 
                 if (savedData) {
@@ -650,7 +640,8 @@
                     end = savedData.end;
                     isSkipped = savedData.skipped || false;
                 } else {
-                    const defaults = getDefaultTimes(dayOfWeek);
+                    const date = new Date(currentYear, currentMonth, day);
+                    const defaults = getDefaultTimes(date.getDay());
                     start = defaults.start;
                     end = defaults.end;
                 }
@@ -658,15 +649,6 @@
                 if (!isSkipped) {
                     totalDuration += calculateDuration(start, end);
                 }
-
-                summaryData.push({
-                    date: dateKey,
-                    dayOfWeek: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek],
-                    start,
-                    end,
-                    hours: calculateDuration(start, end),
-                    skipped: isSkipped
-                });
             }
             
             const totalSalary = totalDuration * hourlyRate;
@@ -688,11 +670,7 @@
         }
         
         window.updateSummary = updateSummary;
-        
-        window.printPage = function() {
-            window.print();
-        }
-
+        window.printPage = function() { window.print(); }
         window.onload = initializeAppAndAuth;
 
     </script>
@@ -706,21 +684,20 @@
         <div class="nav-container flex flex-col md:flex-row items-center justify-between bg-white p-4 rounded-xl shadow-lg mb-6 space-y-4 md:space-y-0">
             <div class="flex items-center space-x-4">
                 <button id="prevMonthBtn" class="month-nav-btn p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
                 </button>
                 <div class="text-2xl font-semibold text-gray-800 flex items-center space-x-2">
                      <select id="yearSelector" class="p-2 border rounded-md text-lg focus:ring-indigo-500 focus:border-indigo-500"></select>
                      <select id="monthSelector" class="p-2 border rounded-md text-lg focus:ring-indigo-500 focus:border-indigo-500"></select>
                 </div>
                 <button id="nextMonthBtn" class="month-nav-btn p-2 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition duration-150">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </button>
             </div>
         </div>
 
         <!-- Calendar Grid -->
         <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-            <!-- Day Headers -->
             <div class="calendar-grid">
                 <div class="day-header bg-red-600">週日</div>
                 <div class="day-header">週一</div>
@@ -730,64 +707,44 @@
                 <div class="day-header">週五</div>
                 <div class="day-header bg-red-600">週六</div>
             </div>
-
-            <!-- Calendar Body (Dynamically populated by JS) -->
-            <div id="calendarBody" class="calendar-grid">
-                <!-- Day cells will be inserted here -->
-            </div>
+            <div id="calendarBody" class="calendar-grid"></div>
         </div>
         
         <!-- Summary and Salary Calculation -->
         <div class="summary-container mt-8 bg-indigo-50 p-6 rounded-xl shadow-lg">
-            
             <div class="summary-header flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b border-indigo-300 pb-2">
                 <h2 class="text-2xl font-bold text-indigo-800">薪資統計</h2>
                 <div class="flex space-x-2">
                     <button type="button" onclick="updateSummary()" class="mt-2 sm:mt-0 flex items-center space-x-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition duration-150 shadow-md active:scale-95 transform">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                         <span>重新計算總時數</span>
                     </button>
-                    <!-- 列印按鈕 -->
                     <button type="button" onclick="printPage()" class="mt-2 sm:mt-0 flex items-center space-x-1 px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition duration-150 shadow-md active:scale-95 transform">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                         <span>列印本頁 (A4)</span>
                     </button>
                 </div>
             </div>
             
             <div class="summary-grid grid grid-cols-1 md:grid-cols-3 gap-6">
-                
-                <!-- 時薪輸入 -->
                 <div class="summary-item bg-white p-4 rounded-lg shadow-md border-l-4 border-indigo-500">
-                    <label for="hourlyRateInput" class="block text-sm font-medium text-gray-700 mb-2">
-                        時薪 (元)
-                    </label>
+                    <label for="hourlyRateInput" class="block text-sm font-medium text-gray-700 mb-2">時薪 (元)</label>
                     <input type="number" id="hourlyRateInput" value="190" min="0" step="1"
                            class="w-full text-2xl font-bold text-indigo-700 p-2 border-2 border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150"
-                           placeholder="輸入時薪"
-                    >
+                           placeholder="輸入時薪">
                 </div>
-                
-                <!-- 總時數 -->
                 <div class="summary-item bg-white p-4 rounded-lg shadow-md border-l-4 border-green-500 flex flex-col justify-center">
                     <p class="text-sm font-medium text-gray-700">總時數 (小時)</p>
-                    <p class="text-4xl font-extrabold text-green-700 summary-text">
-                        <span id="totalHours">0.00</span>
-                    </p>
+                    <p class="text-4xl font-extrabold text-green-700 summary-text"><span id="totalHours">0.00</span></p>
                 </div>
-                
-                <!-- 總薪資 -->
                 <div class="summary-item bg-white p-4 rounded-lg shadow-md border-l-4 border-red-500 flex flex-col justify-center">
                     <p class="text-sm font-medium text-gray-700">總薪資 (元)</p>
-                    <p class="text-4xl font-extrabold text-red-700 summary-text">
-                        <span id="totalSalary">0</span>
-                    </p>
+                    <p class="text-4xl font-extrabold text-red-700 summary-text"><span id="totalSalary">0</span></p>
                 </div>
             </div>
             
              <p class="mt-4 text-sm text-gray-600 text-center no-print">計算公式：總時數 (<span id="totalHours-alt">0.00</span>) × 時薪 (<span id="hourlyRateDisplay">0</span>) = 總薪資 (<span id="totalSalary-alt">0</span>)</p>
 
-            <!-- 簽名欄位區塊 (1行) -->
             <div class="signature-section mt-12 border-t-2 border-indigo-200 pt-8 print:border-gray-300">
                 <div class="signature-row flex flex-col md:flex-row justify-between items-end gap-6">
                     <div class="flex items-end w-full">
@@ -804,10 +761,7 @@
                     </div>
                 </div>
             </div>
-
         </div>
-
     </div>
-
 </body>
 </html>

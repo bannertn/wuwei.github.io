@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -270,6 +270,16 @@
             return 0; 
         }
 
+        function normalizeDuration(duration) {
+            if (duration <= 0) {
+                return 0;
+            }
+
+            const wholeHours = Math.floor(duration);
+            const decimalPart = duration - wholeHours;
+            return decimalPart <= 0.7 ? wholeHours : wholeHours + 1;
+        }
+
         function getDefaultTimes(dayOfWeek) {
             if ([1, 3, 4, 5].includes(dayOfWeek)) {
                 return { start: '12:00', end: '18:00' };
@@ -297,7 +307,7 @@
         }
 
         async function saveDayData(dateKey, start, end, skipped) {
-            const duration = calculateDuration(start, end);
+            const duration = normalizeDuration(calculateDuration(start, end));
             const data = {
                 dateKey: dateKey,
                 start: start,
@@ -525,9 +535,9 @@
                 const endValue = savedData ? savedData.end : defaultEnd;
                 const isSkipped = savedData && savedData.skipped ? true : false;
                 
-                const duration = calculateDuration(startValue, endValue);
+                const duration = normalizeDuration(calculateDuration(startValue, endValue));
                 // 修改：列印時的文字，如果是跳過則顯示「休假」
-                const printText = isSkipped ? "休假" : `${duration.toFixed(1)}小時`;
+                const printText = isSkipped ? "休假" : `${duration.toFixed(0)}小時`;
                 
                 const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
                 
@@ -616,8 +626,8 @@
                 vacationLabel.classList.replace('block', 'hidden');
             }
 
-            const duration = calculateDuration(start, end);
-            const printText = skipped ? "休假" : `${duration.toFixed(1)}小時`;
+            const duration = normalizeDuration(calculateDuration(start, end));
+            const printText = skipped ? "休假" : `${duration.toFixed(0)}小時`;
             if(printHoursSpan) {
                 printHoursSpan.textContent = printText;
             }
@@ -647,18 +657,18 @@
                 }
 
                 if (!isSkipped) {
-                    totalDuration += calculateDuration(start, end);
+                    totalDuration += normalizeDuration(calculateDuration(start, end));
                 }
             }
             
             const totalSalary = totalDuration * hourlyRate;
             
-            document.getElementById('totalHours').textContent = totalDuration.toFixed(2);
+            document.getElementById('totalHours').textContent = totalDuration.toFixed(0);
             document.getElementById('hourlyRateDisplay').textContent = hourlyRate.toFixed(2);
             document.getElementById('totalSalary').textContent = totalSalary.toFixed(0);
             
             const totalHoursAlt = document.getElementById('totalHours-alt');
-            if (totalHoursAlt) totalHoursAlt.textContent = totalDuration.toFixed(2);
+            if (totalHoursAlt) totalHoursAlt.textContent = totalDuration.toFixed(0);
             
             const totalSalaryAlt = document.getElementById('totalSalary-alt');
             if (totalSalaryAlt) totalSalaryAlt.textContent = totalSalary.toFixed(0);

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -274,10 +274,7 @@
             if (duration <= 0) {
                 return 0;
             }
-
-            const wholeHours = Math.floor(duration);
-            const decimalPart = duration - wholeHours;
-            return decimalPart <= 0.7 ? wholeHours : wholeHours + 1;
+            return Number(duration.toFixed(2));
         }
 
         function getDefaultTimes(dayOfWeek) {
@@ -537,7 +534,7 @@
                 
                 const duration = normalizeDuration(calculateDuration(startValue, endValue));
                 // 修改：列印時的文字，如果是跳過則顯示「休假」
-                const printText = isSkipped ? "休假" : `${duration.toFixed(0)}小時`;
+                const printText = isSkipped ? "休假" : `${duration}小時`;
                 
                 const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
                 
@@ -627,7 +624,7 @@
             }
 
             const duration = normalizeDuration(calculateDuration(start, end));
-            const printText = skipped ? "休假" : `${duration.toFixed(0)}小時`;
+            const printText = skipped ? "休假" : `${duration}小時`;
             if(printHoursSpan) {
                 printHoursSpan.textContent = printText;
             }
@@ -662,13 +659,14 @@
             }
             
             const totalSalary = totalDuration * hourlyRate;
+            const formattedTotalHours = Number(totalDuration.toFixed(2));
             
-            document.getElementById('totalHours').textContent = totalDuration.toFixed(0);
+            document.getElementById('totalHours').textContent = formattedTotalHours;
             document.getElementById('hourlyRateDisplay').textContent = hourlyRate.toFixed(2);
             document.getElementById('totalSalary').textContent = totalSalary.toFixed(0);
             
             const totalHoursAlt = document.getElementById('totalHours-alt');
-            if (totalHoursAlt) totalHoursAlt.textContent = totalDuration.toFixed(0);
+            if (totalHoursAlt) totalHoursAlt.textContent = formattedTotalHours;
             
             const totalSalaryAlt = document.getElementById('totalSalary-alt');
             if (totalSalaryAlt) totalSalaryAlt.textContent = totalSalary.toFixed(0);
